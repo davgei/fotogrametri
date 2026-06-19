@@ -1,0 +1,17 @@
+# Input images (for store for git — legg i Google Drive eller last opp til Colab)
+images/*
+!images/.gitkeep
+*.zip
+
+# Rekonstruksjonsresultater
+output/*
+!output/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+
+# Jupyter
+.ipynb_checkpoints/
