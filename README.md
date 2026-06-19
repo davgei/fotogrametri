@@ -1,0 +1,2 @@
+# fotogrametri
+forsøk med fotgrametri
