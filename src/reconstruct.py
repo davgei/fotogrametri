@@ -5,15 +5,21 @@ Two feature backends for the sparse step:
   --features sift   classical SIFT (default, CPU)
   --features deep   SuperPoint + LightGlue via hloc (GPU, more robust on hard images)
 
+Two dense backends:
+  --dense_method colmap    pyColmap patch match stereo -> dense point cloud (default)
+  --dense_method openmvs   OpenMVS -> dense point cloud + textured mesh
+
 Usage:
     py -3.14 src/reconstruct.py [--image_dir images] [--output_dir output]
                                 [--features sift|deep]
                                 [--matching sequential|exhaustive] [--overlap 10]
-                                [--no_dense]
+                                [--no_dense] [--dense_method colmap|openmvs]
+                                [--openmvs_bin <dir>]
 
 Dense step requires CUDA (GPU). Use --no_dense to skip it (e.g. on CPU-only machines).
 The deep backend requires hloc + torch + GPU:
     pip install git+https://github.com/cvg/Hierarchical-Localization.git
+The openmvs dense backend requires the OpenMVS binaries on PATH (or via --openmvs_bin).
 """
 
 import argparse
@@ -107,7 +113,7 @@ def run_sfm_deep(
     return model, model_dir
 
 
-def run_dense(best_model_dir: Path, image_dir: Path, dense_dir: Path) -> Path:
+def undistort(best_model_dir: Path, image_dir: Path, dense_dir: Path) -> None:
     if dense_dir.exists():
         shutil.rmtree(dense_dir)
     dense_dir.mkdir(parents=True)
@@ -119,6 +125,8 @@ def run_dense(best_model_dir: Path, image_dir: Path, dense_dir: Path) -> Path:
         image_path=image_dir,
     )
 
+
+def run_dense_colmap(dense_dir: Path) -> Path:
     print("  Running patch match stereo (GPU required)...")
     pycolmap.patch_match_stereo(workspace_path=dense_dir)
 
@@ -139,6 +147,8 @@ def run_reconstruction(
     matching: str = "sequential",
     overlap: int = 10,
     dense: bool = True,
+    dense_method: str = "colmap",
+    openmvs_bin: Path | None = None,
 ) -> None:
     images = find_images(image_dir)
     if len(images) < 2:
@@ -181,10 +191,22 @@ def run_reconstruction(
         print(f"\nDone. Sparse model saved to: {sparse_dir}")
         return
 
-    print("\nDense reconstruction (MVS)...")
+    print(f"\nDense reconstruction (MVS, backend={dense_method})...")
     dense_dir = output_dir / "dense"
-    fused_ply = run_dense(best_model_dir, image_dir, dense_dir)
-    print(f"\nDone. Dense point cloud: {fused_ply}")
+    undistort(best_model_dir, image_dir, dense_dir)
+
+    if dense_method == "openmvs":
+        from src.dense_openmvs import run_dense_openmvs
+
+        result = run_dense_openmvs(dense_dir, output_dir, bin_dir=openmvs_bin)
+        print(
+            f"\nDone."
+            f"\n  Dense point cloud : {result.dense_ply}"
+            f"\n  Textured mesh     : {result.textured_mesh}"
+        )
+    else:
+        fused_ply = run_dense_colmap(dense_dir)
+        print(f"\nDone. Dense point cloud: {fused_ply}")
 
 
 def main() -> None:
@@ -214,6 +236,18 @@ def main() -> None:
         action="store_true",
         help="Skip dense reconstruction (faster, no GPU required)",
     )
+    parser.add_argument(
+        "--dense_method",
+        choices=["colmap", "openmvs"],
+        default="colmap",
+        help="colmap = pyColmap patch match stereo; openmvs = OpenMVS dense + textured mesh",
+    )
+    parser.add_argument(
+        "--openmvs_bin",
+        type=Path,
+        default=None,
+        help="Directory containing OpenMVS binaries (if not on PATH)",
+    )
     args = parser.parse_args()
 
     if not args.image_dir.exists():
@@ -227,6 +261,8 @@ def main() -> None:
         matching=args.matching,
         overlap=args.overlap,
         dense=not args.no_dense,
+        dense_method=args.dense_method,
+        openmvs_bin=args.openmvs_bin,
     )
 
 
